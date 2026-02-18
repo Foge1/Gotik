@@ -208,7 +208,7 @@ fun CreateOrderDialog(
                             address = address.trim(),
                             dateTime = System.currentTimeMillis(),
                             cargoDescription = cargoDescription.trim(),
-                            pricePerHour = pricePerHour.toInt(),
+                            pricePerHour = pricePerHour.toDouble(),
                             estimatedHours = estimatedHours.toInt(),
                             requiredWorkers = requiredWorkers.toInt(),
                             minWorkerRating = minWorkerRating.toFloat(),
@@ -218,7 +218,7 @@ fun CreateOrderDialog(
                             workerId = null,
                             dispatcherId = 0, // Будет установлен ViewModel
                             workerRating = null,
-                            comment = null
+                            comment = ""
                         )
                         onCreate(order)
                     }

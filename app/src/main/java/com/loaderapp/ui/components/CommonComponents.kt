@@ -1,6 +1,7 @@
 package com.loaderapp.ui.components
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Error
@@ -204,6 +205,7 @@ fun SkeletonOrderCard(modifier: Modifier = Modifier) {
     }
 }
 
-private fun Modifier.shimmerBackground() = this.then(
+@Composable
+private fun Modifier.shimmerBackground(): Modifier = this.then(
     Modifier.background(MaterialTheme.colorScheme.surfaceVariant)
 )
