@@ -30,6 +30,8 @@ import com.loaderapp.domain.model.OrderModel
 import com.loaderapp.domain.model.OrderStatusModel
 import com.loaderapp.domain.usecase.order.WorkerStats
 import com.loaderapp.presentation.loader.LoaderViewModel
+import com.loaderapp.ui.components.AppBottomBar
+import com.loaderapp.ui.components.BottomNavItem
 import com.loaderapp.ui.components.EmptyStateView
 import com.loaderapp.ui.components.ErrorView
 import com.loaderapp.ui.components.LoadingView
@@ -61,6 +63,15 @@ fun LoaderScreen(
     val scope = rememberCoroutineScope()
     
     var selectedTab by remember { mutableIntStateOf(0) }
+    var bottomBarIndex by remember { mutableIntStateOf(0) }
+
+    val bottomNavItems = listOf(
+        BottomNavItem(icon = Icons.Default.Assignment, label = "Заказы"),
+        BottomNavItem(icon = Icons.Default.History, label = "История"),
+        BottomNavItem(icon = Icons.Default.Star, label = "Рейтинг"),
+        BottomNavItem(icon = Icons.Default.Person, label = "Профиль"),
+        BottomNavItem(icon = Icons.Default.Settings, label = "Настройки")
+    )
     
     // Обработка Snackbar сообщений
     LaunchedEffect(Unit) {
@@ -76,7 +87,14 @@ fun LoaderScreen(
                 onRefresh = { viewModel.refresh() }
             )
         },
-        snackbarHost = { SnackbarHost(snackbarHostState) }
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = {
+            AppBottomBar(
+                items = bottomNavItems,
+                selectedIndex = bottomBarIndex,
+                onItemSelected = { bottomBarIndex = it }
+            )
+        }
     ) { paddingValues ->
         Column(
             modifier = Modifier
