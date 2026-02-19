@@ -1,22 +1,24 @@
 package com.loaderapp.ui.dispatcher
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ExperimentalMaterialApi
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -24,623 +26,701 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.loaderapp.LoaderApplication
+import com.loaderapp.core.common.UiState
 import com.loaderapp.data.model.Order
-import com.loaderapp.data.model.OrderStatus
-import com.loaderapp.data.model.User
-import com.loaderapp.ui.components.AppBottomBar
-import com.loaderapp.ui.components.BottomNavItem
+import com.loaderapp.domain.model.OrderModel
+import com.loaderapp.domain.model.OrderStatusModel
+import com.loaderapp.domain.usecase.order.DispatcherStats
+import com.loaderapp.presentation.dispatcher.DispatcherViewModel
 import com.loaderapp.ui.history.HistoryScreen
-import com.loaderapp.ui.loader.EmptyState
-import com.loaderapp.ui.loader.SkeletonCard
+import com.loaderapp.ui.profile.ProfileScreen
 import com.loaderapp.ui.rating.RatingScreen
 import com.loaderapp.ui.settings.SettingsScreen
-import com.loaderapp.ui.theme.StatusOrange
-import androidx.activity.compose.BackHandler
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class DispatcherDestination { ORDERS, SETTINGS, RATING, HISTORY, PROFILE, CREATE }
+private enum class DispatcherTab { AVAILABLE, IN_WORK }
+private enum class BottomNavSection { ORDERS, HISTORY, RATING, PROFILE, SETTINGS }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun DispatcherScreen(
     viewModel: DispatcherViewModel,
-    userName: String,
     onSwitchRole: () -> Unit,
-    onDarkThemeChanged: ((Boolean) -> Unit)? = null,
-    onOrderClick: (Order, User?, User?) -> Unit = { _, _, _ -> }
+    onDarkThemeChanged: (Boolean) -> Unit,
+    onOrderClick: (Long) -> Unit
 ) {
-    val orders by viewModel.orders.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val errorMessage by viewModel.errorMessage.collectAsState()
+    val ordersState by viewModel.ordersState.collectAsState()
+    val statsState by viewModel.statsState.collectAsState()
     val searchQuery by viewModel.searchQuery.collectAsState()
     val isSearchActive by viewModel.isSearchActive.collectAsState()
-    val completedCount by viewModel.completedCount.collectAsState(initial = 0)
-    val activeCount by viewModel.activeCount.collectAsState(initial = 0)
-    val snackbarMessage by viewModel.snackbarMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val isRefreshing by viewModel.isRefreshing.collectAsState()
-    val workerCounts by viewModel.workerCounts.collectAsState()
-
-    var showSwitchDialog by remember { mutableStateOf(false) }
-    var currentDestination by remember { mutableStateOf(DispatcherDestination.ORDERS) }
-    var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("Свободные", "В работе")
     val scope = rememberCoroutineScope()
 
-    val availableCount = orders.count { it.status == OrderStatus.AVAILABLE }
-    val takenCount = orders.count { it.status == OrderStatus.TAKEN || it.status == OrderStatus.IN_PROGRESS }
+    var selectedTab by remember { mutableStateOf(DispatcherTab.AVAILABLE) }
+    var selectedSection by remember { mutableStateOf(BottomNavSection.ORDERS) }
+    var showCreateDialog by remember { mutableStateOf(false) }
 
-    // BackHandler: закрыть поиск → вернуться на заказы → вернуться на первую вкладку
-    BackHandler(enabled = isSearchActive || currentDestination != DispatcherDestination.ORDERS || selectedTab != 0) {
-        when {
-            isSearchActive -> viewModel.setSearchActive(false)
-            currentDestination != DispatcherDestination.ORDERS -> currentDestination = DispatcherDestination.ORDERS
-            selectedTab != 0 -> selectedTab = 0
+    // Данные для профиля/истории/рейтинга
+    val context = LocalContext.current
+    val app = remember(context) { context.applicationContext as LoaderApplication }
+    var currentUser by remember { mutableStateOf<com.loaderapp.data.model.User?>(null) }
+    var historyOrders by remember { mutableStateOf<List<Order>>(emptyList()) }
+    var completedCount by remember { mutableStateOf(0) }
+    var activeCount by remember { mutableStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        viewModel.snackbarMessage.collect { message ->
+            snackbarHostState.showSnackbar(message)
         }
     }
 
-    val navItems = listOf(
-        BottomNavItem(Icons.Default.Assignment, "Заказы", availableCount),
-        BottomNavItem(Icons.Default.History, "История"),
-        BottomNavItem(Icons.Default.Star, "Рейтинг"),
-        BottomNavItem(Icons.Default.Person, "Профиль"),
-        BottomNavItem(Icons.Default.Settings, "Настройки")
-    )
-    val destinations = listOf(
-        DispatcherDestination.ORDERS,
-        DispatcherDestination.HISTORY,
-        DispatcherDestination.RATING,
-        DispatcherDestination.PROFILE,
-        DispatcherDestination.SETTINGS
-    )
+    LaunchedEffect(Unit) {
+        val userId = app.userPreferences.getCurrentUserId() ?: return@LaunchedEffect
+        currentUser = app.repository.getUserById(userId)
+        app.repository.getOrdersByDispatcher(userId).collect { orders ->
+            historyOrders = orders
+        }
+    }
 
-    // CREATE не показывает BottomBar
-    val showBottomBar = currentDestination != DispatcherDestination.CREATE
+    LaunchedEffect(statsState) {
+        if (statsState is UiState.Success) {
+            val stats = (statsState as UiState.Success<DispatcherStats>).data
+            completedCount = stats.completedOrders
+            activeCount = stats.activeOrders
+        }
+    }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            if (showBottomBar) {
-                AppBottomBar(
-                    items = navItems,
-                    selectedIndex = destinations.indexOf(currentDestination).coerceAtLeast(0),
-                    onItemSelected = { index -> currentDestination = destinations[index] }
-                )
-            }
-        }
+        containerColor = MaterialTheme.colorScheme.background
     ) { paddingValues ->
-        AnimatedContent(
-            targetState = currentDestination,
-            transitionSpec = {
-                fadeIn(tween(220)) + slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { it / 10 } togetherWith
-                        fadeOut(tween(160))
-            },
-            label = "dispatcher_nav",
-            modifier = Modifier.padding(paddingValues)
-        ) { destination ->
-            when (destination) {
-                DispatcherDestination.ORDERS -> OrdersContent(
-                    orders = orders, isLoading = isLoading, isRefreshing = isRefreshing,
-                    userName = userName, selectedTab = selectedTab, tabs = tabs,
-                    availableCount = availableCount, takenCount = takenCount,
-                    completedCount = completedCount,
-                    searchQuery = searchQuery, isSearchActive = isSearchActive,
-                    onTabSelected = { selectedTab = it },
-                    onCreateOrder = { currentDestination = DispatcherDestination.CREATE },
-                    onCancelOrder = { viewModel.cancelOrder(it) },
-                    onSearchQueryChange = { viewModel.setSearchQuery(it) },
-                    onSearchToggle = { viewModel.setSearchActive(it) },
-                    onOrderClick = { order ->
-                        scope.launch {
-                            val dispatcher = viewModel.getUserById(order.dispatcherId)
-                            val worker = order.workerId?.let { viewModel.getUserById(it) }
-                            onOrderClick(order, dispatcher, worker)
-                        }
-                    },
-                    onRefresh = { viewModel.refresh() },
-                    workerCounts = workerCounts
-                )
-                DispatcherDestination.CREATE -> CreateOrderScreen(
-                    onBack = { currentDestination = DispatcherDestination.ORDERS },
-                    onCreate = { address, dateTime, cargo, price, hours, comment, requiredWorkers, minRating ->
-                        viewModel.createOrder(address, dateTime, cargo, price, hours, comment, requiredWorkers, minRating)
-                        currentDestination = DispatcherDestination.ORDERS
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            // Main content area
+            Box(modifier = Modifier.weight(1f)) {
+                when (selectedSection) {
+                    BottomNavSection.ORDERS -> {
+                        OrdersSection(
+                            ordersState = ordersState,
+                            selectedTab = selectedTab,
+                            onTabChange = { selectedTab = it },
+                            isSearchActive = isSearchActive,
+                            searchQuery = searchQuery,
+                            onSearchActiveChange = { viewModel.setSearchActive(it) },
+                            onSearchQueryChange = { viewModel.updateSearchQuery(it) },
+                            onOrderClick = onOrderClick,
+                            onCancelOrder = { viewModel.cancelOrder(it) },
+                            onCreateClick = { showCreateDialog = true }
+                        )
                     }
-                )
-                DispatcherDestination.SETTINGS -> SettingsScreen(
-                    onMenuClick = { /* нет drawer */ },
-                    onBackClick = { currentDestination = DispatcherDestination.ORDERS },
-                    onDarkThemeChanged = onDarkThemeChanged,
-                    onSwitchRole = { showSwitchDialog = true }
-                )
-                DispatcherDestination.RATING -> RatingScreen(
-                    userName = userName, userRating = 5.0,
-                    onMenuClick = { /* нет drawer */ },
-                    onBackClick = { currentDestination = DispatcherDestination.ORDERS },
-                    dispatcherCompletedCount = completedCount, dispatcherActiveCount = activeCount, isDispatcher = true
-                )
-                DispatcherDestination.HISTORY -> HistoryScreen(
-                    orders = orders,
-                    onMenuClick = { /* нет drawer */ },
-                    onBackClick = { currentDestination = DispatcherDestination.ORDERS }
-                )
-                DispatcherDestination.PROFILE -> {
-                    val currentUser by viewModel.currentUser.collectAsState()
-                    val completedCnt by viewModel.completedCount.collectAsState(initial = 0)
-                    val activeCnt by viewModel.activeCount.collectAsState(initial = 0)
-                    currentUser?.let { user ->
-                        com.loaderapp.ui.profile.ProfileScreen(
-                            user = user,
-                            dispatcherCompletedCount = completedCnt,
-                            dispatcherActiveCount = activeCnt,
-                            onMenuClick = { /* нет drawer */ },
-                            onSaveProfile = { name, phone, birthDate -> viewModel.saveProfile(name, phone, birthDate) }
+                    BottomNavSection.HISTORY -> {
+                        HistoryScreen(
+                            orders = historyOrders,
+                            onMenuClick = {},
+                            onBackClick = { selectedSection = BottomNavSection.ORDERS }
+                        )
+                    }
+                    BottomNavSection.RATING -> {
+                        RatingScreen(
+                            userName = currentUser?.name ?: "",
+                            userRating = currentUser?.rating ?: 0.0,
+                            onMenuClick = {},
+                            onBackClick = { selectedSection = BottomNavSection.ORDERS },
+                            dispatcherCompletedCount = completedCount,
+                            dispatcherActiveCount = activeCount,
+                            isDispatcher = true
+                        )
+                    }
+                    BottomNavSection.PROFILE -> {
+                        currentUser?.let { user ->
+                            ProfileScreen(
+                                user = user,
+                                dispatcherCompletedCount = completedCount,
+                                dispatcherActiveCount = activeCount,
+                                onMenuClick = {},
+                                onSaveProfile = { name, phone, birthDate ->
+                                    scope.launch {
+                                        val updated = user.copy(
+                                            name = name,
+                                            phone = phone,
+                                            birthDate = birthDate
+                                        )
+                                        app.repository.updateUser(updated)
+                                        currentUser = updated
+                                    }
+                                },
+                                onSwitchRole = onSwitchRole
+                            )
+                        }
+                    }
+                    BottomNavSection.SETTINGS -> {
+                        SettingsScreen(
+                            onMenuClick = {},
+                            onBackClick = { selectedSection = BottomNavSection.ORDERS },
+                            onDarkThemeChanged = onDarkThemeChanged,
+                            onSwitchRole = onSwitchRole
                         )
                     }
                 }
             }
+
+            // Bottom Navigation Bar
+            DispatcherBottomBar(
+                selectedSection = selectedSection,
+                onSectionSelected = { selectedSection = it }
+            )
         }
     }
 
-    if (showSwitchDialog) {
-        AlertDialog(
-            onDismissRequest = { showSwitchDialog = false },
-            title = { Text("Сменить роль?") },
-            text = { Text("Вы хотите выйти из режима диспетчера?") },
-            confirmButton = { TextButton(onClick = { showSwitchDialog = false; onSwitchRole() }) { Text("Да") } },
-            dismissButton = { TextButton(onClick = { showSwitchDialog = false }) { Text("Отмена") } }
+    if (showCreateDialog) {
+        CreateOrderDialog(
+            onDismiss = { showCreateDialog = false },
+            onCreate = { order ->
+                viewModel.createOrder(order) {
+                    showCreateDialog = false
+                }
+            }
         )
     }
-    errorMessage?.let { LaunchedEffect(it) { viewModel.clearError() } }
-    snackbarMessage?.let { msg ->
-        LaunchedEffect(msg) {
-            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short)
-            viewModel.clearSnackbar()
-        }
-    }
 }
 
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun OrdersContent(
-    orders: List<Order>, isLoading: Boolean, isRefreshing: Boolean, userName: String,
-    selectedTab: Int, tabs: List<String>, availableCount: Int, takenCount: Int,
-    completedCount: Int = 0,
-    searchQuery: String, isSearchActive: Boolean, onTabSelected: (Int) -> Unit,
-    onCreateOrder: () -> Unit, onCancelOrder: (Order) -> Unit,
-    onSearchQueryChange: (String) -> Unit, onSearchToggle: (Boolean) -> Unit,
-    onOrderClick: (Order) -> Unit, onRefresh: () -> Unit,
-    workerCounts: Map<Long, Int> = emptyMap()
+private fun OrdersSection(
+    ordersState: UiState<List<OrderModel>>,
+    selectedTab: DispatcherTab,
+    onTabChange: (DispatcherTab) -> Unit,
+    isSearchActive: Boolean,
+    searchQuery: String,
+    onSearchActiveChange: (Boolean) -> Unit,
+    onSearchQueryChange: (String) -> Unit,
+    onOrderClick: (Long) -> Unit,
+    onCancelOrder: (OrderModel) -> Unit,
+    onCreateClick: () -> Unit
 ) {
-    val availableOrders = orders.filter { it.status == OrderStatus.AVAILABLE }
-    val takenOrders = orders.filter { it.status == OrderStatus.TAKEN || it.status == OrderStatus.IN_PROGRESS || it.status == OrderStatus.COMPLETED }
-    val focusRequester = remember { FocusRequester() }
-    val pagerState = rememberPagerState(initialPage = selectedTab, pageCount = { 2 })
-    val scope = rememberCoroutineScope()
-    val pullRefreshState = rememberPullRefreshState(refreshing = isRefreshing, onRefresh = onRefresh)
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Top bar
+        if (isSearchActive) {
+            val focusRequester = remember { FocusRequester() }
+            val focusManager = LocalFocusManager.current
 
-    // Синхронизация pager ↔ selectedTab
-    LaunchedEffect(selectedTab) {
-        if (pagerState.currentPage != selectedTab) pagerState.animateScrollToPage(selectedTab)
-    }
-    LaunchedEffect(pagerState.currentPage) {
-        if (pagerState.currentPage != selectedTab) onTabSelected(pagerState.currentPage)
-    }
-
-    Scaffold(
-        topBar = {
-            Column {
-                TopAppBar(
-                    title = {
-                        if (isSearchActive) {
-                            OutlinedTextField(
-                                value = searchQuery, onValueChange = onSearchQueryChange,
-                                placeholder = { Text("Поиск заказов...") }, singleLine = true,
-                                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = Color.Transparent,
-                                    unfocusedBorderColor = Color.Transparent
-                                )
-                            )
-                            LaunchedEffect(Unit) { focusRequester.requestFocus() }
-                        } else {
-                            Column {
-                                Text("Панель диспетчера", fontWeight = FontWeight.SemiBold)
-                                Text(userName, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                        }
-                    },
-                    navigationIcon = {
-                        if (isSearchActive) {
-                            IconButton(onClick = { onSearchToggle(false) }) {
-                                Icon(Icons.Default.ArrowBack, "Назад")
-                            }
-                        }
-                    },
-                    actions = {
-                        if (!isSearchActive) {
-                            IconButton(onClick = { onSearchToggle(true) }) {
-                                Icon(Icons.Default.Search, "Поиск")
-                            }
-                        } else if (searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { onSearchQueryChange("") }) {
-                                Icon(Icons.Default.Clear, "Очистить")
-                            }
+            SearchBar(
+                query = searchQuery,
+                onQueryChange = onSearchQueryChange,
+                onSearch = { focusManager.clearFocus() },
+                active = true,
+                onActiveChange = {
+                    if (!it) {
+                        onSearchActiveChange(false)
+                        onSearchQueryChange("")
+                    }
+                },
+                placeholder = { Text("Поиск по адресу, грузу...") },
+                leadingIcon = {
+                    IconButton(onClick = {
+                        onSearchActiveChange(false)
+                        onSearchQueryChange("")
+                    }) {
+                        Icon(Icons.Default.ArrowBack, "Назад")
+                    }
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { onSearchQueryChange("") }) {
+                            Icon(Icons.Default.Clear, "Очистить")
                         }
                     }
-                )
-                // Pill-style вкладки
-                val pillPrimary = MaterialTheme.colorScheme.primary
-                val pillSurface = MaterialTheme.colorScheme.surfaceVariant
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(pillSurface)
-                        .padding(4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf(
-                        "Свободные" to (if (availableCount > 0) "$availableCount" else null),
-                        "В работе" to (if (takenCount > 0 || completedCount > 0) "$takenCount/$completedCount" else null)
-                    ).forEachIndexed { index, (label, badge) ->
-                        val selected = pagerState.currentPage == index
-                        val badgeColor = if (index == 0) pillPrimary else StatusOrange
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(50))
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
-                                )
-                                .clickable { scope.launch { pagerState.animateScrollToPage(index) } }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                Text(
-                                    label,
-                                    fontSize = 14.sp,
-                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                    color = if (selected) pillPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                if (badge != null) {
-                                    Badge(containerColor = badgeColor) {
-                                        Text(badge, fontSize = 10.sp, color = Color.White)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        floatingActionButton = {
-            val listState = rememberLazyListState()
-            val fabVisible by remember {
-                derivedStateOf { listState.firstVisibleItemIndex == 0 || listState.firstVisibleItemScrollOffset == 0 }
-            }
-            val haptic = LocalHapticFeedback.current
-            AnimatedVisibility(
-                visible = fabVisible,
-                enter = fadeIn() + slideInVertically { it },
-                exit = fadeOut() + slideOutVertically { it }
-            ) {
-                ExtendedFloatingActionButton(
-                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onCreateOrder() },
-                    icon = { Icon(Icons.Default.Add, null) },
-                    text = { Text("Создать заказ") }
-                )
-            }
-        }
-    ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding).pullRefresh(pullRefreshState)) {
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize()
-            ) { page ->
-                val currentOrders = if (page == 0) availableOrders else takenOrders
-                when {
-                    isLoading && !isRefreshing -> LazyColumn(
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        items(4) { SkeletonCard() }
-                    }
-                    currentOrders.isEmpty() -> {
-                        val icon = if (page == 0) Icons.Default.Inbox else Icons.Default.Assignment
-                        val title = if (page == 0) {
-                            if (isSearchActive && searchQuery.isNotEmpty()) "Заказы не найдены" else "Нет свободных заказов"
-                        } else "Нет заказов в работе"
-                        val subtitle = if (page == 0) {
-                            if (isSearchActive && searchQuery.isNotEmpty()) "Попробуйте другой запрос" else "Создайте первый заказ"
-                        } else "Свободные заказы появятся здесь"
-                        EmptyState(icon = icon, title = title, subtitle = subtitle)
-                    }
-                    else -> LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(16.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        itemsIndexed(currentOrders, key = { _, it -> it.id }) { index, order ->
-                            var visible by remember { mutableStateOf(false) }
-                            LaunchedEffect(Unit) { kotlinx.coroutines.delay(index.toLong() * 50L); visible = true }
-                            AnimatedVisibility(
-                                visible,
-                                enter = fadeIn(tween(280)) + slideInVertically(tween(280)) { it / 4 }
-                            ) {
-                                OrderCard(
-                                    order = order,
-                                    onCancel = { onCancelOrder(it) },
-                                    onClick = { onOrderClick(order) },
-                                    workerCount = workerCounts[order.id] ?: 0
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-            PullRefreshIndicator(
-                refreshing = isRefreshing, state = pullRefreshState,
-                modifier = Modifier.align(Alignment.TopCenter),
-                contentColor = MaterialTheme.colorScheme.primary
-            )
-        }
-    }
-}
-
-@Composable
-fun timeAgo(timestamp: Long): String {
-    val diff = System.currentTimeMillis() - timestamp
-    val minutes = diff / 60_000
-    val hours = diff / 3_600_000
-    val days = diff / 86_400_000
-    return when {
-        minutes < 1 -> "только что"
-        minutes < 60 -> "$minutes мин. назад"
-        hours < 24 -> "$hours ч. назад"
-        days < 7 -> "$days д. назад"
-        else -> SimpleDateFormat("dd.MM.yyyy", Locale.getDefault()).format(Date(timestamp))
-    }
-}
-
-@Composable
-fun OrderCard(order: Order, onCancel: (Order) -> Unit, onClick: () -> Unit = {}, workerCount: Int = 0) {
-    val haptic = LocalHapticFeedback.current
-    val dateFormat = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault())
-    var showCancelConfirm by remember { mutableStateOf(false) }
-    val accentColor = when (order.status) {
-        OrderStatus.AVAILABLE -> MaterialTheme.colorScheme.primary
-        OrderStatus.TAKEN, OrderStatus.IN_PROGRESS -> StatusOrange
-        OrderStatus.COMPLETED -> MaterialTheme.colorScheme.secondary
-        OrderStatus.CANCELLED -> MaterialTheme.colorScheme.error
-    }
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        elevation = CardDefaults.cardElevation(0.dp),
-        shape = MaterialTheme.shapes.medium
-    ) {
-        Box(modifier = Modifier.fillMaxWidth()) {
-            Box(
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(accentColor.copy(alpha = 0.10f), Color.Transparent)
-                        )
-                    )
-            )
-            Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 14.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                    .focusRequester(focusRequester)
+            ) {}
+
+            LaunchedEffect(Unit) { focusRequester.requestFocus() }
+        } else {
+            // Header
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 24.dp, end = 16.dp, top = 20.dp, bottom = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column {
                     Text(
-                        order.address, fontSize = 16.sp, fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    StatusChip(order.status)
-                }
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        dateFormat.format(Date(order.dateTime)), fontSize = 13.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text("·", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.5f))
-                    Text(
-                        timeAgo(order.createdAt), fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(0.7f)
+                        text = "Панель диспетчера",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                Text(
-                    order.cargoDescription, fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp)
-                )
-                if (order.comment.isNotBlank()) {
-                    Text(
-                        "💬 ${order.comment}", fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 2.dp)
+                IconButton(onClick = { onSearchActiveChange(true) }) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "Поиск",
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                if (order.requiredWorkers > 1 || order.minWorkerRating > 0f) {
-                    Row(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (order.requiredWorkers > 1) {
-                            com.loaderapp.ui.loader.WorkerProgressBadge(
-                                current = workerCount, required = order.requiredWorkers
-                            )
-                        }
-                        if (order.minWorkerRating > 0f) {
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                shape = MaterialTheme.shapes.extraSmall
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Default.Star, null,
-                                        tint = com.loaderapp.ui.theme.GoldStar,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Text(
-                                        " от ${order.minWorkerRating}", fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
+            }
+        }
+
+        // Tab switcher
+        TabSwitcher(
+            selectedTab = selectedTab,
+            onTabChange = onTabChange,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+        )
+
+        // Orders list
+        val filteredOrders = when (ordersState) {
+            is UiState.Success -> when (selectedTab) {
+                DispatcherTab.AVAILABLE -> ordersState.data.filter {
+                    it.status == OrderStatusModel.AVAILABLE
+                }
+                DispatcherTab.IN_WORK -> ordersState.data.filter {
+                    it.status == OrderStatusModel.TAKEN || it.status == OrderStatusModel.IN_PROGRESS
+                }
+            }
+            else -> emptyList()
+        }
+
+        Box(modifier = Modifier.weight(1f)) {
+            when (ordersState) {
+                is UiState.Loading -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                     }
                 }
-                Row(
-                    modifier = Modifier.padding(top = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "${order.pricePerHour.toInt()} ₽/час", fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold, color = accentColor
-                    )
-                    if (order.estimatedHours > 1) {
+                is UiState.Error -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text(
-                            " · ~${order.estimatedHours} ч · ${(order.pricePerHour * order.estimatedHours).toInt()} ₽",
-                            fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = ordersState.message,
+                            color = MaterialTheme.colorScheme.error,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.padding(24.dp)
                         )
                     }
                 }
-                if (order.status == OrderStatus.COMPLETED) {
-                    HorizontalDivider(
-                        modifier = Modifier.padding(vertical = 8.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant
-                    )
-                    order.completedAt?.let { completedAt ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 4.dp)
+                else -> {
+                    if (filteredOrders.isEmpty()) {
+                        // Empty state — точно как на скрине
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
                         ) {
-                            Icon(
-                                Icons.Default.CheckCircle, null,
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                " Завершён ${dateFormat.format(Date(completedAt))}",
-                                fontSize = 12.sp, color = MaterialTheme.colorScheme.secondary,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                    order.workerRating?.let { rating ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            repeat(5) { i ->
+                            Box(
+                                modifier = Modifier
+                                    .size(110.dp)
+                                    .clip(RoundedCornerShape(55.dp))
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                                contentAlignment = Alignment.Center
+                            ) {
                                 Icon(
-                                    if (i < rating.toInt()) Icons.Default.Star else Icons.Default.StarBorder,
-                                    null,
-                                    tint = if (i < rating.toInt()) com.loaderapp.ui.theme.GoldStar
-                                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(0.3f),
-                                    modifier = Modifier.size(14.dp)
+                                    imageVector = Icons.Default.Inbox,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(52.dp),
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
                             }
+                            Spacer(modifier = Modifier.height(24.dp))
                             Text(
-                                " Оценка грузчика", fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(start = 4.dp)
+                                text = when (selectedTab) {
+                                    DispatcherTab.AVAILABLE -> "Нет свободных заказов"
+                                    DispatcherTab.IN_WORK -> "Нет заказов в работе"
+                                },
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onBackground
                             )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Создайте первый заказ",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            items(filteredOrders, key = { it.id }) { order ->
+                                DispatcherOrderCard(
+                                    order = order,
+                                    onClick = { onOrderClick(order.id) },
+                                    onCancel = { onCancelOrder(order) }
+                                )
+                            }
                         }
                     }
                 }
-                if (order.status == OrderStatus.AVAILABLE) {
-                    OutlinedButton(
-                        onClick = {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            showCancelConfirm = true
-                        },
-                        modifier = Modifier.align(Alignment.End).padding(top = 8.dp),
-                        shape = MaterialTheme.shapes.small,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                            contentColor = MaterialTheme.colorScheme.error
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.5.dp, MaterialTheme.colorScheme.error
+            }
+        }
+
+        // FAB — "Создать заказ"
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(end = 20.dp, bottom = 16.dp, top = 8.dp),
+            horizontalArrangement = Arrangement.End
+        ) {
+            Button(
+                onClick = onCreateClick,
+                shape = RoundedCornerShape(50.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.primary
+                ),
+                contentPadding = PaddingValues(horizontal = 28.dp, vertical = 16.dp),
+                elevation = ButtonDefaults.buttonElevation(
+                    defaultElevation = 4.dp,
+                    pressedElevation = 8.dp
+                )
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Создать заказ",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TabSwitcher(
+    selectedTab: DispatcherTab,
+    onTabChange: (DispatcherTab) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(50.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp)
+        ) {
+            TabButton(
+                text = "Свободные",
+                isSelected = selectedTab == DispatcherTab.AVAILABLE,
+                onClick = { onTabChange(DispatcherTab.AVAILABLE) },
+                modifier = Modifier.weight(1f)
+            )
+            TabButton(
+                text = "В работе",
+                isSelected = selectedTab == DispatcherTab.IN_WORK,
+                onClick = { onTabChange(DispatcherTab.IN_WORK) },
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun TabButton(
+    text: String,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val bgColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+        else Color.Transparent,
+        animationSpec = tween(200),
+        label = "tabBg"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(200),
+        label = "tabText"
+    )
+
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(46.dp))
+            .background(bgColor)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            )
+            .padding(vertical = 12.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 15.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+        )
+    }
+}
+
+@Composable
+private fun DispatcherBottomBar(
+    selectedSection: BottomNavSection,
+    onSectionSelected: (BottomNavSection) -> Unit
+) {
+    data class NavItem(val section: BottomNavSection, val icon: ImageVector, val label: String)
+
+    val items = listOf(
+        NavItem(BottomNavSection.ORDERS, Icons.Default.Assignment, "Заказы"),
+        NavItem(BottomNavSection.HISTORY, Icons.Default.History, "История"),
+        NavItem(BottomNavSection.RATING, Icons.Default.Star, "Рейтинг"),
+        NavItem(BottomNavSection.PROFILE, Icons.Default.Person, "Профиль"),
+        NavItem(BottomNavSection.SETTINGS, Icons.Default.Settings, "Настройки"),
+    )
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp,
+        shadowElevation = 16.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 4.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.Top
+        ) {
+            items.forEach { item ->
+                val isSelected = selectedSection == item.section
+                val scale by animateFloatAsState(
+                    targetValue = if (isSelected) 1.08f else 1f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
+                    label = "scale"
+                )
+                val iconColor by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    animationSpec = tween(200, easing = FastOutSlowInEasing),
+                    label = "iconColor"
+                )
+                val textColor by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    animationSpec = tween(200, easing = FastOutSlowInEasing),
+                    label = "textColor"
+                )
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = { onSectionSelected(item.section) }
                         )
-                    ) { Text("Отменить", fontWeight = FontWeight.Medium) }
+                        .padding(vertical = 4.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Top
+                ) {
+                    // Индикатор сверху
+                    Box(
+                        modifier = Modifier
+                            .width(24.dp)
+                            .height(2.5.dp)
+                            .clip(RoundedCornerShape(1.dp))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primary
+                                else Color.Transparent
+                            )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .scale(scale)
+                            .clip(RoundedCornerShape(50))
+                            .background(
+                                if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                else Color.Transparent
+                            )
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            tint = iconColor,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(3.dp))
+
+                    Text(
+                        text = item.label,
+                        fontSize = 10.sp,
+                        fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = textColor,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DispatcherOrderCard(
+    order: OrderModel,
+    onClick: () -> Unit,
+    onCancel: () -> Unit
+) {
+    var showCancelDialog by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = order.address,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                OrderStatusChip(status = order.status)
+            }
+
+            Text(
+                text = order.cargoDescription,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(Icons.Default.CalendarToday, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary)
+                Text(
+                    text = SimpleDateFormat("dd MMM, HH:mm", Locale("ru")).format(Date(order.dateTime)),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                OrderParamChip(Icons.Default.Person, "${order.requiredWorkers} чел")
+                OrderParamChip(Icons.Default.Schedule, "${order.estimatedHours} ч")
+                OrderParamChip(Icons.Default.AttachMoney, "${order.pricePerHour.toInt()}₽/ч")
+                OrderParamChip(Icons.Default.Star, "≥${order.minWorkerRating}")
+            }
+
+            if (order.status == OrderStatusModel.AVAILABLE || order.status == OrderStatusModel.TAKEN) {
+                OutlinedButton(
+                    onClick = { showCancelDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Icon(Icons.Default.Close, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Отменить заказ")
                 }
             }
         }
     }
 
-    if (showCancelConfirm) {
+    if (showCancelDialog) {
         AlertDialog(
-            onDismissRequest = { showCancelConfirm = false },
-            shape = MaterialTheme.shapes.extraLarge,
-            icon = {
-                Icon(
-                    Icons.Default.Warning, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(28.dp)
-                )
-            },
-            title = { Text("Отменить заказ?", fontWeight = FontWeight.SemiBold) },
-            text = {
-                Text(
-                    "Заказ «${order.address}» будет отменён. Это действие нельзя отменить.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            },
+            onDismissRequest = { showCancelDialog = false },
+            title = { Text("Отменить заказ?") },
+            text = { Text("Вы уверены что хотите отменить этот заказ?") },
             confirmButton = {
-                Button(
-                    onClick = { showCancelConfirm = false; onCancel(order) },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    shape = MaterialTheme.shapes.small
+                TextButton(
+                    onClick = { onCancel(); showCancelDialog = false },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                 ) { Text("Отменить заказ") }
             },
             dismissButton = {
-                TextButton(onClick = { showCancelConfirm = false }) { Text("Назад") }
+                TextButton(onClick = { showCancelDialog = false }) { Text("Назад") }
             }
         )
     }
 }
 
 @Composable
-fun StatusChip(status: OrderStatus) {
+private fun OrderStatusChip(status: OrderStatusModel) {
     val (text, color) = when (status) {
-        OrderStatus.AVAILABLE -> "Доступен" to MaterialTheme.colorScheme.primary
-        OrderStatus.TAKEN -> "Занят" to StatusOrange
-        OrderStatus.IN_PROGRESS -> "В процессе" to StatusOrange
-        OrderStatus.COMPLETED -> "Завершён" to MaterialTheme.colorScheme.secondary
-        OrderStatus.CANCELLED -> "Отменён" to MaterialTheme.colorScheme.error
+        OrderStatusModel.AVAILABLE -> "Доступен" to Color(0xFF4CAF50)
+        OrderStatusModel.TAKEN -> "Взят" to Color(0xFFFF9800)
+        OrderStatusModel.IN_PROGRESS -> "В работе" to Color(0xFF2196F3)
+        OrderStatusModel.COMPLETED -> "Завершён" to Color(0xFF9C27B0)
+        OrderStatusModel.CANCELLED -> "Отменён" to Color(0xFFF44336)
     }
-    Surface(color = color.copy(0.12f), shape = RoundedCornerShape(6.dp), shadowElevation = 0.dp) {
+    Surface(color = color.copy(alpha = 0.2f), shape = RoundedCornerShape(12.dp)) {
         Text(
-            text,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = color
+            text = text,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold
         )
+    }
+}
+
+@Composable
+private fun OrderParamChip(icon: ImageVector, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Icon(icon, null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(text = value, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

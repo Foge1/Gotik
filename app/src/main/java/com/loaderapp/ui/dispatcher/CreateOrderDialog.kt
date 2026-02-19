@@ -8,246 +8,229 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import java.text.SimpleDateFormat
-import java.util.*
+import com.loaderapp.domain.model.OrderModel
+import com.loaderapp.domain.model.OrderStatusModel
 
+/**
+ * Диалог создания нового заказа
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreateOrderDialog(
     onDismiss: () -> Unit,
-    onCreate: (address: String, dateTime: Long, cargo: String, price: Double, hours: Int, comment: String, requiredWorkers: Int, minWorkerRating: Float) -> Unit
+    onCreate: (OrderModel) -> Unit
 ) {
     var address by remember { mutableStateOf("") }
-    var cargo by remember { mutableStateOf("") }
-    var price by remember { mutableStateOf("") }
-    var estimatedHours by remember { mutableStateOf("1") }
-    var comment by remember { mutableStateOf("") }
-    var requiredWorkers by remember { mutableIntStateOf(1) }
-    var minWorkerRating by remember { mutableStateOf("") }
-    var showError by remember { mutableStateOf(false) }
-
-    val calendar = Calendar.getInstance()
-    var selectedDate by remember { mutableStateOf(calendar.timeInMillis) }
-    var selectedHour by remember { mutableStateOf(calendar.get(Calendar.HOUR_OF_DAY)) }
-    var selectedMinute by remember { mutableStateOf(calendar.get(Calendar.MINUTE)) }
-    var showDatePicker by remember { mutableStateOf(false) }
-    var showTimePicker by remember { mutableStateOf(false) }
-
-    val dateFormat = SimpleDateFormat("dd MMMM yyyy", Locale("ru"))
-
+    var cargoDescription by remember { mutableStateOf("") }
+    var pricePerHour by remember { mutableStateOf("") }
+    var estimatedHours by remember { mutableStateOf("") }
+    var requiredWorkers by remember { mutableStateOf("") }
+    var minWorkerRating by remember { mutableStateOf("3.0") }
+    
+    var addressError by remember { mutableStateOf(false) }
+    var cargoError by remember { mutableStateOf(false) }
+    var priceError by remember { mutableStateOf(false) }
+    var hoursError by remember { mutableStateOf(false) }
+    var workersError by remember { mutableStateOf(false) }
+    
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новый заказ") },
-        containerColor = MaterialTheme.colorScheme.surface,
+        title = {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Add, null)
+                Text("Новый заказ")
+            }
+        },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .verticalScroll(rememberScrollState())
-                    .padding(vertical = 8.dp),
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // Адрес
                 OutlinedTextField(
                     value = address,
-                    onValueChange = { address = it },
-                    label = { Text("Адрес") },
+                    onValueChange = {
+                        address = it
+                        addressError = false
+                    },
+                    label = { Text("Адрес*") },
                     leadingIcon = { Icon(Icons.Default.LocationOn, null) },
+                    isError = addressError,
+                    supportingText = if (addressError) {
+                        { Text("Введите адрес") }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(
-                        capitalization = KeyboardCapitalization.Sentences,
-                        keyboardType = KeyboardType.Text
-                    )
+                    singleLine = true
                 )
-
-                OutlinedButton(onClick = { showDatePicker = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.DateRange, null, modifier = Modifier.padding(end = 8.dp))
-                    Text(dateFormat.format(Date(selectedDate)))
-                }
-
-                OutlinedButton(onClick = { showTimePicker = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Default.AccessTime, null, modifier = Modifier.padding(end = 8.dp))
-                    Text(String.format("%02d:%02d", selectedHour, selectedMinute))
-                }
-
+                
+                // Описание груза
                 OutlinedTextField(
-                    value = cargo,
-                    onValueChange = { cargo = it },
-                    label = { Text("Описание груза") },
+                    value = cargoDescription,
+                    onValueChange = {
+                        cargoDescription = it
+                        cargoError = false
+                    },
+                    label = { Text("Описание груза*") },
                     leadingIcon = { Icon(Icons.Default.Inventory, null) },
+                    isError = cargoError,
+                    supportingText = if (cargoError) {
+                        { Text("Опишите груз") }
+                    } else null,
                     modifier = Modifier.fillMaxWidth(),
-                    maxLines = 3,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                    minLines = 2,
+                    maxLines = 3
                 )
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedTextField(
-                        value = price,
-                        onValueChange = { price = it },
-                        label = { Text("₽/час") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
-                    )
-                    OutlinedTextField(
-                        value = estimatedHours,
-                        onValueChange = { estimatedHours = it },
-                        label = { Text("Часов") },
-                        modifier = Modifier.weight(0.6f),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                    )
-                }
-
-                // Количество грузчиков
-                HorizontalDivider()
-                Text(
-                    "Количество грузчиков",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                
+                // Цена за час
+                OutlinedTextField(
+                    value = pricePerHour,
+                    onValueChange = {
+                        if (it.all { char -> char.isDigit() } || it.isEmpty()) {
+                            pricePerHour = it
+                            priceError = false
+                        }
+                    },
+                    label = { Text("Цена за час (₽)*") },
+                    leadingIcon = { Icon(Icons.Default.AttachMoney, null) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    isError = priceError,
+                    supportingText = if (priceError) {
+                        { Text("Введите цену > 0") }
+                    } else null,
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
                 )
+                
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    IconButton(
-                        onClick = { if (requiredWorkers > 1) requiredWorkers-- },
-                        enabled = requiredWorkers > 1
-                    ) {
-                        Icon(Icons.Default.Remove, null)
-                    }
-                    Text(
-                        text = requiredWorkers.toString(),
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = { if (requiredWorkers < 20) requiredWorkers++ }
-                    ) {
-                        Icon(Icons.Default.Add, null)
-                    }
-                    Text(
-                        text = if (requiredWorkers == 1) "чел." else "чел.",
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                // Минимальный рейтинг
-                HorizontalDivider()
-                Text(
-                    "Минимальный рейтинг грузчика",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                OutlinedTextField(
-                    value = minWorkerRating,
-                    onValueChange = { input ->
-                        // Пропускаем только цифры, точку и запятую; не даём ввести > 5
-                        val filtered = input.replace(',', '.').filter { it.isDigit() || it == '.' }
-                        val num = filtered.toFloatOrNull()
-                        if (filtered.isEmpty() || (num != null && num <= 5f) || filtered == ".")
-                            minWorkerRating = filtered
-                    },
-                    label = { Text("От 0 до 5 (необязательно)") },
-                    leadingIcon = { Icon(Icons.Default.Star, null, modifier = Modifier.size(18.dp)) },
-                    trailingIcon = {
-                        if (minWorkerRating.isNotEmpty()) {
-                            IconButton(onClick = { minWorkerRating = "" }) {
-                                Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp))
+                    // Часы работы
+                    OutlinedTextField(
+                        value = estimatedHours,
+                        onValueChange = {
+                            if (it.all { char -> char.isDigit() } || it.isEmpty()) {
+                                estimatedHours = it
+                                hoursError = false
                             }
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    supportingText = {
-                        val v = minWorkerRating.toFloatOrNull()
-                        if (minWorkerRating.isNotEmpty() && (v == null || v < 0 || v > 5)) {
-                            Text("Введите число от 0 до 5", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                )
-
-                OutlinedTextField(
-                    value = comment,
-                    onValueChange = { comment = it },
-                    label = { Text("Комментарий (необязательно)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    maxLines = 2,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-                )
-
-                if (showError) {
-                    Text(
-                        "Заполните все обязательные поля корректно",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.bodySmall
+                        },
+                        label = { Text("Часов*") },
+                        leadingIcon = { Icon(Icons.Default.Schedule, null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = hoursError,
+                        supportingText = if (hoursError) {
+                            { Text("≥1") }
+                        } else null,
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    
+                    // Количество грузчиков
+                    OutlinedTextField(
+                        value = requiredWorkers,
+                        onValueChange = {
+                            if (it.all { char -> char.isDigit() } || it.isEmpty()) {
+                                requiredWorkers = it
+                                workersError = false
+                            }
+                        },
+                        label = { Text("Грузчиков*") },
+                        leadingIcon = { Icon(Icons.Default.Person, null) },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        isError = workersError,
+                        supportingText = if (workersError) {
+                            { Text("≥1") }
+                        } else null,
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
                     )
                 }
+                
+                // Минимальный рейтинг
+                Column {
+                    Text(
+                        text = "Минимальный рейтинг: ${minWorkerRating}",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    Slider(
+                        value = minWorkerRating.toFloatOrNull() ?: 3.0f,
+                        onValueChange = { minWorkerRating = String.format("%.1f", it) },
+                        valueRange = 0f..5f,
+                        steps = 9 // 0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5
+                    )
+                }
+                
+                Text(
+                    text = "* Обязательные поля",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         },
         confirmButton = {
-            Button(onClick = {
-                if (address.isNotBlank() && cargo.isNotBlank() && price.isNotBlank()) {
-                    try {
-                        val cal = Calendar.getInstance()
-                        cal.timeInMillis = selectedDate
-                        cal.set(Calendar.HOUR_OF_DAY, selectedHour)
-                        cal.set(Calendar.MINUTE, selectedMinute)
-                        cal.set(Calendar.SECOND, 0)
-                        val priceValue = price.toDoubleOrNull() ?: 0.0
-                        val hoursValue = estimatedHours.toIntOrNull() ?: 1
-                        val ratingValue = minWorkerRating.toFloatOrNull()?.coerceIn(0f, 5f) ?: 0f
-                        if (priceValue > 0 && hoursValue > 0) {
-                            onCreate(address, cal.timeInMillis, cargo, priceValue, hoursValue, comment, requiredWorkers, ratingValue)
-                        } else showError = true
-                    } catch (e: Exception) { showError = true }
-                } else showError = true
-            }) { Text("Создать") }
+            Button(
+                onClick = {
+                    // Валидация
+                    var hasErrors = false
+                    
+                    if (address.isBlank()) {
+                        addressError = true
+                        hasErrors = true
+                    }
+                    if (cargoDescription.isBlank()) {
+                        cargoError = true
+                        hasErrors = true
+                    }
+                    if (pricePerHour.toIntOrNull() == null || pricePerHour.toInt() <= 0) {
+                        priceError = true
+                        hasErrors = true
+                    }
+                    if (estimatedHours.toIntOrNull() == null || estimatedHours.toInt() < 1) {
+                        hoursError = true
+                        hasErrors = true
+                    }
+                    if (requiredWorkers.toIntOrNull() == null || requiredWorkers.toInt() < 1) {
+                        workersError = true
+                        hasErrors = true
+                    }
+                    
+                    if (!hasErrors) {
+                        val order = OrderModel(
+                            id = 0, // Будет установлен БД
+                            address = address.trim(),
+                            dateTime = System.currentTimeMillis(),
+                            cargoDescription = cargoDescription.trim(),
+                            pricePerHour = pricePerHour.toDouble(),
+                            estimatedHours = estimatedHours.toInt(),
+                            requiredWorkers = requiredWorkers.toInt(),
+                            minWorkerRating = minWorkerRating.toFloat(),
+                            status = OrderStatusModel.AVAILABLE,
+                            createdAt = System.currentTimeMillis(),
+                            completedAt = null,
+                            workerId = null,
+                            dispatcherId = 0, // Будет установлен ViewModel
+                            workerRating = null,
+                            comment = ""
+                        )
+                        onCreate(order)
+                    }
+                }
+            ) {
+                Text("Создать")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Отмена")
+            }
+        }
     )
-
-    if (showDatePicker) {
-        val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDate)
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { selectedDate = it }
-                    showDatePicker = false
-                }) { Text("ОК") }
-            },
-            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Отмена") } }
-        ) { DatePicker(state = datePickerState) }
-    }
-
-    if (showTimePicker) {
-        val timePickerState = rememberTimePickerState(initialHour = selectedHour, initialMinute = selectedMinute, is24Hour = true)
-        AlertDialog(
-            onDismissRequest = { showTimePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    selectedHour = timePickerState.hour
-                    selectedMinute = timePickerState.minute
-                    showTimePicker = false
-                }) { Text("ОК") }
-            },
-            dismissButton = { TextButton(onClick = { showTimePicker = false }) { Text("Отмена") } },
-            text = { TimePicker(state = timePickerState) }
-        )
-    }
 }

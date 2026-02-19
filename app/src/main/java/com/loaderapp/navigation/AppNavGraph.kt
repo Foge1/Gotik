@@ -9,6 +9,9 @@ import androidx.navigation.*
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import com.loaderapp.LoaderApplication
+import com.loaderapp.domain.model.UserRoleModel
+import com.loaderapp.presentation.dispatcher.DispatcherViewModel
+import com.loaderapp.presentation.loader.LoaderViewModel
 import com.loaderapp.ui.auth.RoleSelectionScreen
 import com.loaderapp.ui.dispatcher.DispatcherScreen
 import com.loaderapp.ui.loader.LoaderScreen
@@ -120,8 +123,7 @@ fun AppNavGraph(
             )
         ) { backStackEntry ->
             val userId = backStackEntry.arguments?.getLong(NavArgs.USER_ID) ?: return@composable
-            val viewModel: com.loaderapp.ui.dispatcher.DispatcherViewModel = hiltViewModel()
-            val currentUser by viewModel.currentUser.collectAsState()
+            val viewModel: DispatcherViewModel = hiltViewModel()
             
             LaunchedEffect(userId) {
                 viewModel.initialize(userId)
@@ -129,7 +131,6 @@ fun AppNavGraph(
             
             DispatcherScreen(
                 viewModel = viewModel,
-                userName = currentUser?.name ?: "Диспетчер",
                 onSwitchRole = {
                     scope.launch {
                         app.userPreferences.clearCurrentUser()
@@ -141,9 +142,8 @@ fun AppNavGraph(
                 onDarkThemeChanged = { enabled ->
                     scope.launch { app.userPreferences.setDarkTheme(enabled) }
                 },
-                onOrderClick = { order, dispatcher, worker ->
-                    // Пока просто навигация по orderId
-                    navController.navigate(Route.OrderDetail.createRoute(order.id, isDispatcher = true))
+                onOrderClick = { orderId ->
+                    navController.navigate(Route.OrderDetail.createRoute(orderId, isDispatcher = true))
                 }
             )
         }
@@ -156,8 +156,7 @@ fun AppNavGraph(
             )
         ) { backStackEntry ->
             val userId = backStackEntry.arguments?.getLong(NavArgs.USER_ID) ?: return@composable
-            val viewModel: com.loaderapp.ui.loader.LoaderViewModel = hiltViewModel()
-            val currentUser by viewModel.currentUser.collectAsState()
+            val viewModel: LoaderViewModel = hiltViewModel()
             
             LaunchedEffect(userId) {
                 viewModel.initialize(userId)
@@ -165,7 +164,6 @@ fun AppNavGraph(
             
             LoaderScreen(
                 viewModel = viewModel,
-                userName = currentUser?.name ?: "Грузчик",
                 onSwitchRole = {
                     scope.launch {
                         app.userPreferences.clearCurrentUser()
@@ -177,9 +175,8 @@ fun AppNavGraph(
                 onDarkThemeChanged = { enabled ->
                     scope.launch { app.userPreferences.setDarkTheme(enabled) }
                 },
-                onOrderClick = { order, dispatcher, worker ->
-                    // Пока просто навигация по orderId
-                    navController.navigate(Route.OrderDetail.createRoute(order.id, isDispatcher = false))
+                onOrderClick = { orderId ->
+                    navController.navigate(Route.OrderDetail.createRoute(orderId, isDispatcher = false))
                 }
             )
         }

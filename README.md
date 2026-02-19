@@ -1,46 +1,22 @@
-# GruzchikiApp 1.6 (ЭТАП 1)
+# GruzchikiApp 9.4
 
-Перенос UI и функционала из 9.4 на архитектуру 1.5
+Android-приложение для управления грузчиками. Kotlin + Jetpack Compose. Бирюзовая тема.
 
-## Выполнено в ЭТАПЕ 1
+## Что нового в 9.1
 
-### ✅ UI Компоненты перенесены
-- [x] Theme (Color.kt, Theme.kt, Type.kt, Shape.kt) - бирюзовая тема
-- [x] LoaderScreen (899 строк) - полный экран грузчика
-- [x] DispatcherScreen - полный экран диспетчера  
-- [x] CreateOrderScreen - создание заказов
-- [x] ProfileScreen, HistoryScreen, RatingScreen, SettingsScreen
-- [x] OrderDetailScreen
-- [x] SplashScreen, RoleSelectionScreen
-- [x] AppBottomBar - навигация
+### Баг-фиксы
+- ✅ **Исправлено завершение заказа у грузчика** — `loadMyOrders` теперь подписан на два Flow: `getOrdersByWorker` (реагирует на смену статуса) и `getOrderIdsByWorker` (junction-таблица для мультигрузчиков). Ранее после `completeOrder` UI не обновлялся т.к. список IDs не менялся.
 
-### ✅ ViewModels адаптированы
-- [x] LoaderViewModel (@HiltViewModel) - работает с data моделями
-- [x] DispatcherViewModel (@HiltViewModel) - работает с data моделями
-- [x] Используют AppRepository из Hilt DI
+### UX-улучшения
+- ✅ **Свайп между вкладками** — обе роли (диспетчер и грузчик) теперь используют `HorizontalPager` с синхронизацией с TabRow. Свайп влево/вправо переключает вкладки плавно.
+- ✅ **Создание заказа — полноэкранный экран** вместо диалога. Переход анимированный, кнопка «Назад» возвращает на список заказов.
+- ✅ **Стильные поля ввода** в дизайне приложения: кастомные рамки в цвете primary, иконки, подсветка активного поля, inline-подсказки. Кнопки даты/времени в стиле карточек. Счётчик грузчиков и выбор рейтинга звёздами — визуально.
 
-### ✅ Архитектура 1.5 сохранена
-- [x] Clean Architecture нетронута
-- [x] Все Use Cases на месте
-- [x] Все Domain модели на месте
-- [x] Hilt DI работает
+## Архитектура
+- MVVM + Room + DataStore + Coroutines/Flow
+- Jetpack Compose Material 3 + HorizontalPager (foundation)
+- Бирюзовая цветовая схема (light + dark)
 
-## Что дальше (ЭТАП 2-4)
-
-### ЭТАП 2: Дополнительные Use Cases
-- [ ] RateOrderUseCase
-- [ ] GetWorkerCountsUseCase
-- [ ] Обновить Repository интерфейсы
-
-### ЭТАП 3: Обновить MainActivity
-- [ ] Инжектить UserPreferences через Hilt
-- [ ] Обновить навигацию для новых экранов
-
-### ЭТАП 4: Тестирование
-- [ ] Проверка всех экранов
-- [ ] Проверка всех функций
-
----
-**Архитектура:** Clean Architecture + Hilt
-**UI:** Полный функционал 9.4
-**Технологии:** Kotlin, Compose, Material 3, Room, Flow
+## Роли
+- **Диспетчер**: создаёт заказы (полноэкранная форма), управляет статусами, видит статистику
+- **Грузчик**: принимает заказы, завершает (статус обновляется мгновенно), оценивает
